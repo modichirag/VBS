@@ -37,7 +37,7 @@ def callback_hmc_zstep(state, testing=False, **kwargs):
         for axis in ax:
             axis.set_xscale('log')
             axis.grid(which='both', alpha=0.5)
-        plt.savefig(kwargs['savepath'] + 'figs/rc-%d.png'%(state.i))
+        plt.savefig(kwargs['savepath'] + 'figs/rc-%05d.png'%(state.i))
         plt.close()
 
 
@@ -55,10 +55,97 @@ def callback_hmc_qstep(state, testing=False, **kwargs):
         box_size = conf.box_size[0]
         truth = kwargs['truth']
         
-        fig, ax = plt.subplots(1, 3, figsize=(11, 3))
         ss = np.array(state.samples)
         fig = corner(ss, truth)
-        plt.savefig(kwargs['savepath'] + 'figs/qcorner-%d.png'%(state.i))
+        plt.savefig(kwargs['savepath'] + 'figs/qcorner-%05d.png'%(state.i))
+        plt.close()
+
+        ndim = ss.shape[-1]
+        fig, ax = plt.subplots(1, ndim, figsize=(ndim*3.5, 3))
+        for i in range(ndim):
+            ax[i].plot(ss[:, i])
+            ax[i].axhline(truth[i], color='k', ls='--')
+        plt.savefig(kwargs['savepath'] + 'figs/qiter-%05d.png'%(state.i))
+        plt.close()
+
+        
+def callback_hmc_zstep_chains(state, testing=False, **kwargs):
+    #Expected shape of samples (ss) in [nsamples, nchains, nc, nc, nc]
+
+    args = kwargs['parse_args']
+    conf = kwargs['conf']
+    box_size = conf.box_size[0]
+    truth = kwargs['truth']
+
+    #Save power spectrum
+    try: state.ps
+    except:
+        state.ps, state.px = [], []
+
+    ss = state.samples[-1]
+    k, pt = power_spectrum(1+truth, boxsize=box_size)
+    pk = [power_spectrum(1+ss[j], boxsize=box_size)[1] for j in range(args.nchains)]
+    px = [power_spectrum(1+ss[j], 1+truth, boxsize=box_size)[1] for j in range(args.nchains)]
+    state.ps.append(pk)
+    state.px.append(px)
+
+    if (state.i % args.nplot == 0) or testing :
+        print("z iteration : ", state.i)
+        acc = np.array(state.accepts)
+        print(acc.shape)
+        print("accepted fraction of zs :", ((acc == 1).sum(axis=0)/acc.shape[0]))
+
+        #
+        fig, ax = plt.subplots(1, 3, figsize=(11, 3))
+
+        for j in range(args.nchains):
+            ax[0].plot(k[1:], px[j][1:]/(pk[j][1:] * pt[1:])**0.5)
+            ax[1].plot(k[1:], (pk[j][1:] / pt[1:])**0.5)
+            ax[2].plot(k[1:], pk[j][1:])
+            ax[2].plot(k[1:], pt[1:], 'k--')
+            
+        ax[0].set_ylabel('$r_c$', fontsize=12)
+        ax[1].set_ylabel('$t_f$', fontsize=12)
+        ax[2].set_ylabel('$P(k)$', fontsize=12)
+        ax[0].set_ylim(0, 1.1)
+        ax[1].set_ylim(0, 2)
+        ax[0].axhline(1, color='k', lw=0.5)
+        ax[1].axhline(1, color='k', lw=0.5)
+        for axis in ax:
+            axis.set_xscale('log')
+            axis.grid(which='both', alpha=0.5)
+        plt.savefig(kwargs['savepath'] + 'figs/ziter-%05d.png'%(state.i))
+        plt.close()
+
+
+def callback_hmc_qstep_chains(state, testing=False, **kwargs):
+    #Expected shape of samples (ss) in [nsamples, nchains, ndim]
+
+    args = kwargs['parse_args']
+    
+    if (state.i % args.nplot == 0) or testing :
+        print("qstep iteration : ", state.i)
+        acc = np.array(state.accepts)
+        print("accepted fraction of qs :", ((acc == 1).sum(axis=0)/acc.shape[0]))
+
+        #
+        conf = kwargs['conf']
+        box_size = conf.box_size[0]
+        truth = kwargs['truth']
+        
+        ss = np.array(state.samples)
+        for j in range(args.nchains):
+            fig = corner(ss[:, j], truth)
+            plt.savefig(kwargs['savepath'] + 'figs/qcorner%d-%05d.png'%(j, state.i))
+            plt.close()
+
+        ndim = ss.shape[-1]
+        fig, ax = plt.subplots(1, ndim, figsize=(ndim*3.5, 3))
+        for j in range(args.nchains):
+            for i in range(ndim):
+                ax[i].plot(ss[:, j, i])
+                ax[i].axhline(truth[i], color='k', ls='--')
+        plt.savefig(kwargs['savepath'] + 'figs/qiter-%05d.png'%(state.i))
         plt.close()
 
 
@@ -71,12 +158,12 @@ def corner(samples, pp):
             if i == j: 
                 ax[i, j].hist(samples[:, i], bins='auto', density=True)
                 mu, sig = samples[:, i].mean(), samples[:, i].std()
-                ax[i, j].axvline(mu, ls="-", color="r", label=mu, lw=0.7)
+                ax[i, j].axvline(mu, ls="-", color="r", label="%0.3f"%mu, lw=0.7)
                 ax[i, j].axvline(mu + sig, ls=":", color="r",lw=0.7)
                 ax[i, j].axvline(mu - sig, ls=":", color="r", lw=0.7)
-                ax[i, j].axvline(pp[i], ls="-", color="k", label=pp[i], lw=0.7)
+                ax[i, j].axvline(pp[i], ls="-", color="k", label="%0.3f"%pp[i], lw=0.7)
                 ax[i, j].legend()
-                #             ax[i, j].set_title(names[i])
+                #ax[i, j].set_title(names[i])
             elif i>j: 
                 ax[i, j].plot(samples[:, i], samples[:, j], '.')
                 ax[i, j].axvline(pp[i], ls="--", color="k")

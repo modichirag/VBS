@@ -8,7 +8,7 @@ os.environ['XLA_PYTHON_CLIENT_PREALLOCATE']='false'
 # os.environ['XLA_PYTHON_CLIENT_MEM_FRACTION'] = '.90'
 
 import jax
-from jax import jit, custom_vjp, ensure_compile_time_eval, grad
+from jax import jit, custom_vjp, ensure_compile_time_eval, grad, vmap
 import jax.numpy as jnp
 import optax
 
@@ -26,8 +26,8 @@ parser.add_argument('--ntrain', type=int, default=10, help="number of training i
 parser.add_argument('--thinning', type=int, default=20, help="thinning")
 parser.add_argument('--lpsteps1', type=int, default=20, help="min leapfrog steps")
 parser.add_argument('--lpsteps2', type=int, default=30, help="max leapfrog steps")
-parser.add_argument('--mcmciter', type=int, default=200, help="number of only mcmc iterations")
-parser.add_argument('--nplot', type=int, default=20, help="callback after these iterations")
+parser.add_argument('--mcmciter', type=int, default=2000, help="number of only mcmc iterations")
+parser.add_argument('--nplot', type=int, default=50, help="callback after these iterations")
 parser.add_argument('--epsadapt', type=int, default=0, help="adapt step size")
 parser.add_argument('--order', type=int, default=1, help="ZA or LPT")
 args = parser.parse_args()
@@ -41,6 +41,7 @@ from vbs_tools import power as power_spectrum
 from vbs_utils import gendata, simulate_nbody
 from callbacks import callback_hmc_zstep, callback_hmc_qstep
 
+gmode = 'mlp'
 savepath = '//mnt/ceph/users/cmodi/pmwdruns/'
 savepath = savepath + 'testgibbs/'
 os.makedirs(savepath, exist_ok=True)
@@ -52,7 +53,7 @@ nc = 32
 cell_size = 4.
 box_size = np.float(nc*cell_size)
 a_start = 0.1
-a_nbody_maxstep = 1. #args.ngrowth
+a_nbody_maxstep = 1/2. #args.ngrowth
 if a_nbody_maxstep > 1 - a_start:
     a_start = 1.
 dnoise = 1.0
@@ -71,7 +72,7 @@ if args.debug == 1:
 
 growth_anum = 128
 conf = Configuration(ptcl_spacing=cell_size, ptcl_grid_shape=(nc,)*3, \
-                     a_start=a_start, a_nbody_maxstep=a_nbody_maxstep, growth_anum=growth_anum, growth_mode='mlp')
+                     a_start=a_start, a_nbody_maxstep=a_nbody_maxstep, growth_anum=growth_anum, growth_mode=gmode)
 confdata = Configuration(ptcl_spacing=cell_size, ptcl_grid_shape=(nc,)*3, \
                      a_start=a_start, a_nbody_maxstep=a_nbody_maxstep, growth_anum=growth_anum, growth_mode='rk4')
 cosmodata = SimpleLCDM(confdata)
@@ -141,13 +142,22 @@ def run():
     #omegam, As = 0.3, 2. 
     p0 = jnp.array([omegam, As])
     var = white_noise(99, conf, real=True)*0.1
+    #var = modes
     cosmo = SimpleLCDM(conf, Omega_m=omegam, A_s_1e9=As)
     cosmo = boltzmann(cosmo, conf)
+
+    # iz, iq = jnp.stack([var, var*1.1]), jnp.stack([p0, p0])
+    # print(iz.shape, iq.shape)
+    # f = vmap(lambda a, b: evolve(a, b , conf))
+    # toret = f(iq, iz)
+    # print(toret.shape)
+    
     #
     print("Call once to compile")
-    print("compile z")
-    log_prob_z2(var, data, cosmo, conf)
-    grad_log_prob_z2(var, data, cosmo, conf)
+    print("compile z2")
+    #log_prob_z2(var, data, cosmo, conf)
+    #grad_log_prob_z2(var, data, cosmo, conf)
+    print('compile z')
     log_prob_z(p0, var, data, conf)
     grad_log_prob_z(p0, var, data, conf)
     print()
@@ -155,7 +165,7 @@ def run():
     log_prob_q(p0, var, data, conf)
     grad_log_prob_q(p0, var, data, conf)
     print("compiled")
-    jit_cosmo(p0)
+    #jit_cosmo(p0)
     
     #Callback
     callback_zstep = lambda state: callback_hmc_zstep(state, parse_args=args,
@@ -172,42 +182,49 @@ def run():
     print('start sampling')
     zstate = alg.Sampler()
     qstate = alg.Sampler()
-    step_size = 0.001
+    zstep_size = 0.01
+    qstep_size = 0.01
+    zepsadapt = alg.DualAveragingStepSize(zstep_size, nadapt=args.epsadapt)
+    qepsadapt = alg.DualAveragingStepSize(qstep_size, nadapt=args.epsadapt)
     nleap = 20
     
-    def _qiteration(iq, iz):
+
+    def qiteration(iq, iz, step_size):
         iz = jnp.array(iz, dtype=jnp.float32)
         lpq = lambda x: np.array(log_prob_q(jnp.array(x,dtype=jnp.float32), iz, data, conf))
         lpq_g = lambda x: np.array(grad_log_prob_q(jnp.array(x,dtype=jnp.float32), iz, data, conf))
         kernel_q = alg.HMC(log_prob=lpq, grad_log_prob=lpq_g)
         q, p, acc, Hs, count = kernel_q.step(iq, nleap, step_size)
+        step_size = qepsadapt(qstate.i, np.exp(Hs[0]-Hs[1]))
         qstate.appends(q, acc, Hs, count)
-
-    def _ziteration(iq, iz):
+        return step_size
+        
+    def ziteration(iq, iz, step_size):
         iq = jnp.array(iq, dtype=jnp.float32)
         lpz = lambda x: np.array(log_prob_z(iq, jnp.array(x, dtype=jnp.float32), data, conf))
         lpz_g = lambda x: np.array(grad_log_prob_z(iq, jnp.array(x,dtype=jnp.float32), data, conf))
         kernel_z = alg.HMC(log_prob=lpz, grad_log_prob=lpz_g)
         q, p, acc, Hs, count = kernel_z.step(iz, nleap, step_size)
+        step_size = zepsadapt(zstate.i, np.exp(Hs[0]-Hs[1]))
         zstate.appends(q, acc, Hs, count)
-
-        
+        return step_size
+    #
     iz, iq = var, p0
-    _ziteration(iq, iz)
-    _qiteration(iq, iz)
+    ziteration(iq, iz, zstep_size)
+    qiteration(iq, iz, qstep_size)
     iz = zstate.samples[-1]
     iq = qstate.samples[-1]
 
     start = time.time()
     for i in range(100):
-        _ziteration(iq, iz)
+        zstep_size = ziteration(iq, iz, zstep_size)
         iz = zstate.samples[-1]
         callback_zstep(zstate)
     print("Time taken for warmup of z : ", time.time() - start)
     print()
     start = time.time()
     for i in range(100):
-        _qiteration(iq, iz)
+        qstep_size = qiteration(iq, iz, qstep_size)
         iq = qstate.samples[-1]
         callback_qstep(qstate)
     print("Time taken for warmup of q : ", time.time() - start)
@@ -217,20 +234,15 @@ def run():
     qstate = alg.Sampler()
     
     start = time.time()
-    for i in range(5000):
-
-        _ziteration(iq, iz)
+    for i in range(10000):
+        zstep_size = ziteration(iq, iz, zstep_size)
         iz = zstate.samples[-1]
         callback_zstep(zstate)
-
-        _qiteration(iq, iz)
+        qstep_size = qiteration(iq, iz, qstep_size)
         iq = qstate.samples[-1]
         callback_qstep(qstate)
 
     print("Time taken : ", time.time() - start)
-
-
-    
 
 if __name__=="__main__":
 

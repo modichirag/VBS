@@ -1,5 +1,5 @@
 from pmwd.configuration import Configuration
-from pmwd.cosmology import SimpleLCDM
+from pmwd.cosmology import SimpleLCDM, SimpleLCDM_s8
 from pmwd.lpt import lpt
 from pmwd.modes import white_noise, linear_modes
 from pmwd.nbody import nbody

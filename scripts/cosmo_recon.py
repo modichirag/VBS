@@ -136,7 +136,7 @@ for ic, cc in enumerate([conf1, conf2]):
     end = time.time()
     print("Time taken : ", (end-start)/niter)
     print()
-    np.save('traj%d'%ic, np.array(traj))
+    #np.save('traj%d'%ic, np.array(traj))
     
 
 sys.exit()
