@@ -36,6 +36,7 @@ def gendata(conf, seed, cosmo, dnoise=1., savepath=None):
     dens = simulate_nbody(lin_modes_c, cosmo, conf)
     noise = np.random.normal(0, dnoise, dens.size).reshape(dens.shape).astype(np.float32)
     data = dens + noise
+    
     if savepath is not None:
         np.save(savepath + "modes", modes)
         np.save(savepath + "linc", lin_modes_c)
@@ -45,12 +46,16 @@ def gendata(conf, seed, cosmo, dnoise=1., savepath=None):
 
         box_size = conf.box_size[0]
         k, pk = power_spectrum(1+modes, boxsize=box_size)
+        np.save(savepath + 'pmodes', pk)
         plt.plot(k, pk, label='modes')
         k, pk = power_spectrum(1+lin_modes, boxsize=box_size)
+        np.save(savepath + 'plin', pk)
         plt.plot(k, pk, label='linear')
         k, pk = power_spectrum(dens, boxsize=box_size)
+        np.save(savepath + 'pfinal', pk)
         plt.plot(k, pk, label='final')
         k, pk = power_spectrum(data, boxsize=box_size)
+        np.save(savepath + 'pdata', pk)
         plt.plot(k, pk, label='data')
         plt.legend()
         plt.loglog()

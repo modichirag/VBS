@@ -39,7 +39,7 @@ sys.path.append('../../hmc/src/')
 import algorithms as alg
 sys.path.append('../src/')
 import vbs_tools as tools
-from jaxhmc import JaxHMC_vmap
+from jaxhmc import JaxHMC_vmap, JaxHMC_vmap_args
 from vbs_tools import power as power_spectrum
 from vbs_utils import gendata, simulate_nbody
 from callbacks import callback_hmc_zstep_chains, callback_hmc_qstep_chains
@@ -51,11 +51,11 @@ os.makedirs(savepath + '/figs/', exist_ok=True)
 
 #####
 seed = 0
-nc = 32
+nc = 16
 cell_size = 4.
 box_size = np.float(nc*cell_size)
 a_start = 0.1
-a_nbody_maxstep = 1.0 #0.5 #args.ngrowth
+a_nbody_maxstep = 1.0  #0.5 #args.ngrowth
 if a_nbody_maxstep > 1 - a_start:
     a_start = 1.
 dnoise = 1.0
@@ -70,7 +70,6 @@ if args.debug == 1:
     args.thinning = 2 
     args.lpsteps1, args.lpsteps2 = 2, 3
     args.nplot = 2
-
 
 growth_anum = 128
 conf = Configuration(ptcl_spacing=cell_size, ptcl_grid_shape=(nc,)*3, \
@@ -167,7 +166,7 @@ def run():
         iq = jnp.array(iq, dtype=jnp.float32)
         lpq = lambda q, z: log_prob_q(jnp.array(q), jnp.array(z), data, conf)
         lpq_g = lambda q, z: grad_log_prob_q(jnp.array(q), jnp.array(z), data, conf)
-        kernel_q = JaxHMC_vmap(log_prob=lpq, grad_log_prob=lpq_g)
+        kernel_q = JaxHMC_vmap_args(log_prob=lpq, grad_log_prob=lpq_g)
         q, p, acc, Hs, count = kernel_q.step(iq, nleap, qstep_size, iz)
         #print("q acc : ", acc)
         qstate.appends(q, acc, Hs, count)
@@ -177,7 +176,7 @@ def run():
         iz = jnp.array(iz, dtype=jnp.float32)
         lpz = lambda z, q: log_prob_z(jnp.array(z), jnp.array(q), data, conf)
         lpz_g = lambda z, q: grad_log_prob_z(jnp.array(z), jnp.array(q), data, conf)
-        kernel_z = JaxHMC_vmap(log_prob=lpz, grad_log_prob=lpz_g)
+        kernel_z = JaxHMC_vmap_args(log_prob=lpz, grad_log_prob=lpz_g)
         z, p, acc, Hs, count = kernel_z.step(iz, nleap, zstep_size, iq)
         #print("z acc : ", acc)
         zstate.appends(np.array(z), acc, Hs, count)
@@ -237,7 +236,7 @@ def run():
 
     print()
     start = time.time()
-    for i in range(10001):
+    for i in range(1001):
 
         ziteration(iq, iz)
         iz = zstate.samples[-1]
